@@ -58,7 +58,7 @@ properties
     muSM
     sigmaSM
     betSM
-    tMU
+    tSM
     % STANDARD ERROR
     % TODO SE
     muSE
@@ -73,6 +73,9 @@ properties
     tCI
 
     nLLFun
+
+    measure='X'
+    units
 end
 properties(Hidden=true)
     FitI
@@ -97,7 +100,7 @@ properties(Hidden=true)
     flds
 
 end
-methods(Static)
+methods(Static,Hidden)
     function P=getP()
         P={...
             'muFix',[],'Num.is';
@@ -130,8 +133,13 @@ methods(Static)
             'bBootEachCmp',[],'isbinary';
             'nBest',[],'Num.is';
             'bootSeed',1,'Num.is';
+            ...
+            'units','','ischar';
+            'measure','','ischar';
         };
     end
+end
+methods(Static)
     function out=getDefaults()
         P=PsyCurveFit.getP();
         out=P(:,1:2)';
@@ -147,7 +155,7 @@ methods(Static)
         if nargin < 3
             RCmpChs=[];
         end
-        Data=PsyCurveData(stdX,cmpX,RcmpChs);
+        Data=PsyCurveData(stdX,cmpX,RCmpChs);
         obj=PsyCurveFit(Data,varargin{:});
     end
 end
@@ -168,6 +176,166 @@ methods
         obj.parse_opts(Opts);
         obj.get_default_fminOpts();
     end
+    function get_default_fminOpts(obj)
+        % SET FMINCON OPTIONS
+        if strcmp(obj.minFuncType,'fmincon')
+            obj.fminOpts             = optimset('fmincon');
+            obj.fminOpts.MaxPCGIter=[];
+            obj.fminOpts.Algorithm   = 'sqp';
+            obj.fminOpts.LargeScale  = 'off';
+            obj.fminOpts.UseParallel = 'never';
+            obj.fminOpts.Display     = 'none';
+            %obj.fminOpts.Display='iter';
+            obj.fminOpts.MaxIter     = 500;
+            obj.fminOpts.MaxFunEvals = 500;
+            %obj.fminOpts.TolCon      = 500;
+        elseif strcmp(obj.minFuncType,'fminsearch')
+            obj.fminOpts             = optimset('fminsearch');
+            obj.fminOpts.UseParallel = 'never';
+            obj.fminOpts.Display     = 'off';
+            obj.fminOpts.MaxIter     = 500;
+        end
+    end
+    function obj=run(obj,bRefit)
+        obj.init_params();
+
+        if nargin < 2
+            bRefit=false;
+        end
+        if bRefit
+            lMFit=obj.muFit;
+            lTFit=obj.tFit;
+            lSFit=obj.sigmaFit;
+            lBFit=obj.betFit;
+            lNegLL=obj.negLL;
+        end
+        if obj.bBest
+            obj.fit_best();
+        else
+            obj.fit_basic();
+        end
+        if bRefit && obj.negLL < lNegLL
+            obj.muFit  =lMFit;
+            obj.tFit  =lTFit;
+            obj.sigmaFit  =lSFit;
+            obj.betFit  =lBFit;
+            obj.negLL =lNegLL;
+        end
+
+        if obj.bBoot
+            obj.fit_boot();
+        end
+    end
+%- Plot
+    function plot_negLL(obj)
+        [RCmpChs,cmpX,stdX]=obj.sel_data();
+        m=unique(stdX);
+        s=.001:.001:.02;
+        b=1;
+
+        % SET INITIAL PARAMETER VALUES
+        nl=zeros(length(s),1);
+        m0  = obj.muFix;
+        s0  = obj.sigmaFix;
+        b0  = obj.betFix;
+        if isempty(m0); m0 = mean([min(cmpX) max(cmpX)]); m0 = m0  + .1.*randn; end
+        if isempty(s0); s0 = diff(Num.minMax(abs(cmpX)))./6;        s0 = s0  + .1.*s0.*randn; end
+        if isempty(b0); b0 = 1;                                 b0 = b0  + .1.*b0.*randn; end
+        p0 = [m0 s0 b0];
+
+        fun=@(p) PsyCurveFit.negLLFunc(p,cmpX,RCmpChs,obj.DPCrt,obj.nIntrvl,obj.muFix,obj.sigmaFix,obj.betFix);
+        for i = 1:length(s)
+            nl(i)=fun([p0(1),s(i),p0(3)]);
+        end
+        plot(s,nl);
+    end
+%- Text
+    function summary(obj)
+        dispV(obj.muFit,'mu')
+        dispV(obj.sigmaFit,'sigma')
+        dispV(obj.tFit,'t')
+        dispV(obj.mFit,'m')
+        dispV(obj.yFit,'y')
+        dispV(obj.betFit,'bet')
+        dispV(obj.negLL,'negLL')
+    end
+%- Plot
+    function plot(obj,varargin)
+
+        figure(1)
+        hold off;
+
+        X=obj.getX();
+        Y=obj.gen_gauss_X(X)*100;
+
+        n=size(Y,1);
+        lcolors=zeros(n,3);
+        for i = 1:n
+            plot(X,Y(i,:),varargin{:},'LineWidth',2);
+            lcolors(i,:)=lastColor();
+            hold on;
+        end
+
+        %subPlot([1 2],1,2);
+        obj.Data.plotPC('LineStyle','none','Colors',lcolors,'Marker','o',varargin{:});
+        axis square;
+
+
+        if ~isempty(obj.units)
+            ulbl=[' (' obj.units ')'];
+        else
+            ulbl='';
+        end
+        xlabel([obj.measure ulbl]);
+        ylabel('Percent Comparison Chosen');
+        Axis.format();
+    end
+    function plotT(obj,varargin)
+        if nargin > 1
+            % TODO varargin
+            TODO varargin
+        end
+        figure(2)
+        hold off;
+
+        % data
+        if obj.bLinear
+            lstyle='none';
+        else
+            lstyle='-';
+        end
+
+        Xd=obj.Data.stdXUnq;
+        Yd=obj.tFit;
+
+        plot(Xd,Yd,'ok','LineStyle',lstyle,'MarkerFaceColor','k');
+        if ~isempty(obj.units)
+            ulbl=[' (' obj.units ')'];
+        else
+            ulbl='';
+        end
+        ylabel([' Threshold ' ulbl]);
+        xlabel([obj.measure ulbl]);
+        Axis.format();
+        if ~obj.bLinear
+            return
+        end
+
+        % line
+        X=obj.getX();
+        [Ys,Yt]=PsyCurve.lin2sigma(X,obj.mFit,obj.yFit,obj.betFit(1),obj.bLogLinear,obj.DPCrt);
+
+        hold on;
+        plot(X,Yt,'k','LineStyle','-','MarkerFaceColor','none');
+        if obj.bLogLinear
+            set(gca,'YScale','log');
+        end
+
+
+
+    end
+end
+methods(Hidden)
     function obj=parse_opts(obj,Opts)
         if ~exist('Opts','var')
             Opts=struct;
@@ -217,57 +385,7 @@ methods
         end
 
     end
-    function get_default_fminOpts(obj)
-        % SET FMINCON OPTIONS
-        if strcmp(obj.minFuncType,'fmincon')
-            obj.fminOpts             = optimset('fmincon');
-            obj.fminOpts.MaxPCGIter=[];
-            obj.fminOpts.Algorithm   = 'sqp';
-            obj.fminOpts.LargeScale  = 'off';
-            obj.fminOpts.UseParallel = 'never';
-            obj.fminOpts.Display     = 'none';
-            %obj.fminOpts.Display='iter';
-            obj.fminOpts.MaxIter     = 500;
-            obj.fminOpts.MaxFunEvals = 500;
-            %obj.fminOpts.TolCon      = 500;
-        elseif strcmp(obj.minFuncType,'fminsearch')
-            obj.fminOpts             = optimset('fminsearch');
-            obj.fminOpts.UseParallel = 'never';
-            obj.fminOpts.Display     = 'off';
-            obj.fminOpts.MaxIter     = 500;
-        end
-    end
 %- MAIN
-    function obj=run(obj,bRefit)
-        obj.init_params();
-
-        if nargin < 2
-            bRefit=false;
-        end
-        if bRefit
-            lMFit=obj.muFit;
-            lTFit=obj.tFit;
-            lSFit=obj.sigmaFit;
-            lBFit=obj.betFit;
-            lNegLL=obj.negLL;
-        end
-        if obj.bBest
-            obj.fit_best();
-        else
-            obj.fit_basic();
-        end
-        if bRefit && obj.negLL < lNegLL
-            obj.muFit  =lMFit;
-            obj.tFit  =lTFit;
-            obj.sigmaFit  =lSFit;
-            obj.betFit  =lBFit;
-            obj.negLL =lNegLL;
-        end
-
-        if obj.bBoot
-            obj.fit_boot();
-        end
-    end
     function fit_basic(obj)
     %NON BOOTSTRAPPED FIT
         obj.sel_data();
@@ -293,7 +411,7 @@ methods
         obj.sel_boot_data(0,[]);
         S=obj.init_sel(obj.nBoot);
 
-        rng('twister',obj.bootSeed);
+        rng(obj.bootSeed,'twister');
         sds=randi(2^32-1,obj.nBoot,1);
 
         for i = 1:obj.nBoot
@@ -474,25 +592,36 @@ methods
     function obj=pack_boot(obj,S)
         obj.pack_dist(S,'boot');
 
-        fld=obj.boot;
+
+        CIlohi = 0.5*(1-obj.CIsz/100) + [0 obj.CIsz/100];
+
+        flds={'mu','sigma','bet','t'};
+        for i = 1:length(flds)
+            fld=flds{i};
+            dat=obj.boot.(fld);
+            obj.([fld 'CI'])=quantile(dat,CIlohi,3);
+            obj.([fld 'SE'])=    std(dat,[],3);
+            obj.([fld 'SM'])=   mean(dat,3);
+        end
+
+        return
 
         % CONFIDENCE INTERVAL: LO & HI BOUNDS
-        CIlohi = 0.5*(1-obj.CIsz/100) + [0 obj.CIsz/100];
         % BOOSTRAPPED CONFIDENCE INTERVALS
-        obj.muCI = quantile(fld.muFitDstb(~isnan(fld.muFitDstb)), CIlohi);
-        obj.sigmaCI = quantile(fld.sigmaFitDstb(~isnan(fld.sigmaFitDstb)), CIlohi);
-        obj.betCI = quantile(fld.betFitDstb(~isnan(fld.betFitDstb)), CIlohi);
-        obj.tCI = quantile(fld.tFitDstb(~isnan(fld.tFitDstb)), CIlohi);
+        obj.muCI    = quantile(fld.muFitDstb(~isnan(fld.muFitDstb)), CIlohi);
+        %obj.sigmaCI = quantile(fld.sigmaFitDstb(~isnan(fld.sigmaFitDstb)), CIlohi);
+        obj.betCI   = quantile(fld.betFitDstb(~isnan(fld.betFitDstb)), CIlohi);
+        obj.tCI     = quantile(fld.tFitDstb(~isnan(fld.tFitDstb)), CIlohi);
         % BOOSTRAPPED STD ERR OF STATISTIC
-        obj.muSE   = std(fld.muFitDstb(~isnan(fld.muFitDstb)));
-        obj.sigmaSE   = std(fld.sigmaFitDstb(~isnan(fld.sigmaFitDstb)));
+        obj.muSE    = std(fld.muFitDstb(~isnan(fld.muFitDstb)));
+        obj.sigmaSE = std(fld.sigmaFitDstb(~isnan(fld.sigmaFitDstb)));
         obj.betSE   = std(fld.betFitDstb(~isnan(fld.betFitDstb)));
-        obj.tSE   = std(fld.tFitDstb(~isnan(fld.tFitDstb)));
+        obj.tSE     = std(fld.tFitDstb(~isnan(fld.tFitDstb)));
         % BOOSTRAPPED MEAN
-        obj.muSM = mean(fld.muFitDstb(~isnan(fld.muFitDstb)));
+        obj.muSM    = mean(fld.muFitDstb(~isnan(fld.muFitDstb)));
         obj.sigmaSM = mean(fld.sigmaFitDstb(~isnan(fld.sigmaFitDstb)));
-        obj.betSM = mean(fld.betFitDstb(~isnan(fld.betFitDstb)));
-        obj.tMU = mean(fld.tFitDstb(~isnan(fld.tFitDstb)));
+        obj.betSM   = mean(fld.betFitDstb(~isnan(fld.betFitDstb)));
+        obj.tMU     = mean(fld.tFitDstb(~isnan(fld.tFitDstb)));
     end
     function obj=pack_dist(obj,S,name)
         flds=fieldnames(S);
@@ -640,23 +769,23 @@ methods
         cmpXUnq=obj.sel.cmpXUnq;
 
         d=2*(cmpXUnq-mean(cmpXUnq,2))+mean(cmpXUnq,2);
-        m=[min(d,[],2) max(d,[],2)];
+        mu0=[min(d,[],2) max(d,[],2)];
 
         mm=[max(cmpXUnq,[],2) min(cmpXUnq,[],2)];
         d=abs(diff(mm,[],2));
-        s=[0.02 2.00].*d;
+        sigma0=[0.02 2.00].*d;
 
         mu=[];
         sigma=[];
         bet=[];
         m=[];
         y=[];
-        if obj.BFit.mu
-            mu=m;
+        if isfield(obj.Any,'mu') && obj.Any.mu
+            mu=mu0;
             mu(~obj.FitI.mu)=[];
         end
         if isfield(obj.Any,'sigma') && obj.Any.sigma
-            sigma=s;
+            sigma=sigma0;
             sigma(~obj.FitI.sigma)=[];
         end
         if isfield(obj.Any,'y') && obj.Any.y
@@ -666,7 +795,7 @@ methods
             %end
         end
         if isfield(obj.Any,'m') && obj.Any.m
-            t=PsyCurve.sigma2thresh(s,obj.DPCrt);
+            t=PsyCurve.sigma2thresh(sigma0,obj.DPCrt);
             t=max(t(:))/min(t(:));
             if obj.bLogLinear
                 t=log(t);
@@ -715,33 +844,16 @@ methods
     end
     function out=negLLFunc_(obj,p)
         [mu,sigma,bet]=obj.get_params(p);
-        out=PsyCurveFit.negLLFunc(mu,sigma,bet,obj.sel.cmpX,obj.sel.RCmpChs, obj.nIntrvl);
+        if numel(mu)==1
+            out=PsyCurveFit.negLLFunc(mu,sigma,bet,obj.sel.cmpX,obj.sel.RCmpChs, obj.nIntrvl);
+        else
+            out=PsyCurveFit.negLLFuncMult(mu,sigma,[],bet, obj.sel.stdX,obj.sel.cmpX,obj.sel.RCmpChs, obj.DPCrt,obj.nIntrvl,obj.bLogLinear,false);
+
+        end
     end
     function out=negLLFuncLinear_(obj,p)
         [mu,y,m,bet]=obj.get_params(p);
-        out=PsyCurveFit.negLLFuncLinear(mu,y,m,bet, obj.sel.stdX,obj.sel.cmpX,obj.sel.RCmpChs, obj.DPCrt,obj.nIntrvl,obj.bLogLinear);
-    end
-    function plot_negLL(obj)
-        [RCmpChs,cmpX,stdX]=obj.sel_data();
-        m=unique(stdX);
-        s=.001:.001:.02;
-        b=1;
-
-        % SET INITIAL PARAMETER VALUES
-        nl=zeros(length(s),1);
-        m0  = obj.muFix;
-        s0  = obj.sigmaFix;
-        b0  = obj.betFix;
-        if isempty(m0); m0 = mean([min(cmpX) max(cmpX)]); m0 = m0  + .1.*randn; end
-        if isempty(s0); s0 = diff(Num.minMax(abs(cmpX)))./6;        s0 = s0  + .1.*s0.*randn; end
-        if isempty(b0); b0 = 1;                                 b0 = b0  + .1.*b0.*randn; end
-        p0 = [m0 s0 b0];
-
-        fun=@(p) PsyCurveFit.negLLFunc(p,cmpX,RCmpChs,obj.DPCrt,obj.nIntrvl,obj.muFix,obj.sigmaFix,obj.betFix);
-        for i = 1:length(s)
-            nl(i)=fun([p0(1),s(i),p0(3)]);
-        end
-        plot(s,nl);
+        out=PsyCurveFit.negLLFuncMult(mu,y,m,bet, obj.sel.stdX,obj.sel.cmpX,obj.sel.RCmpChs, obj.DPCrt,obj.nIntrvl,obj.bLogLinear,true);
     end
     function Y=gen_gauss_X(obj,X);
         nS=obj.Data.nS;
@@ -771,69 +883,6 @@ methods
             s.t=PsyCurve.sigma2thresh(sigma,obj.DPCrt);
         end
     end
-%- Text
-    function summary(obj)
-        dispV(obj.muFit,'mu')
-        dispV(obj.sigmaFit,'sigma')
-        dispV(obj.tFit,'t')
-        dispV(obj.mFit,'m')
-        dispV(obj.yFit,'y')
-        dispV(obj.betFit,'bet')
-        dispV(obj.negLL,'negLL')
-    end
-%- Plot
-    function plot(obj,varargin)
-
-        figure(1)
-        hold off;
-
-        X=obj.getX();
-        Y=obj.gen_gauss_X(X)*100;
-
-        n=size(Y,1);
-        lcolors=zeros(n,3);
-        for i = 1:n
-            plot(X,Y(i,:),varargin{:},'LineWidth',2);
-            lcolors(i,:)=lastColor();
-            hold on;
-        end
-
-        %subPlot([1 2],1,2);
-        obj.Data.plotPC('LineStyle','none','Colors',lcolors,'Marker','o',varargin{:});
-    end
-    function plotT(obj)
-        figure(2)
-        hold off;
-
-
-        % data
-        if obj.bLinear
-            lstyle='none';
-        else
-            lstyle='-';
-        end
-
-        Xd=obj.Data.stdXUnq;
-        Yd=obj.tFit;
-
-        plot(Xd,Yd,'ok','LineStyle',lstyle,'MarkerFaceColor','k');
-        if ~obj.bLinear
-            return
-        end
-
-        % line
-        X=obj.getX();
-        [Ys,Yt]=PsyCurve.lin2sigma(X,obj.mFit,obj.yFit,obj.betFit(1),obj.bLogLinear,obj.DPCrt);
-
-        hold on;
-        plot(X,Yt,'k','LineStyle','-','MarkerFaceColor','none');
-        if obj.bLogLinear
-            set(gca,'YScale','log');
-        end
-
-
-
-    end
     function X=getX(obj,n)
         if nargin < 2 || isempty(n)
             n=1000;
@@ -848,10 +897,14 @@ methods(Static)
         out=-(sum(log(     PsyCurve.genGauss(cmpX(RCmpChs==1),mu,sigma,bet, nIntrvl) )) + ...
               sum(log( 1 - PsyCurve.genGauss(cmpX(RCmpChs==0),mu,sigma,bet, nIntrvl) )) );
     end
-    function out=negLLFuncLinear(mu,y,m,bet, stdXAll,cmpXAll,RCmpChsAll, DPCrt,nIntrvl,bLog)
+    function out=negLLFuncMult(mu,y,m,bet, stdXAll,cmpXAll,RCmpChsAll, DPCrt,nIntrvl,bLog,bLinear)
         % mu, y, bet have numel = nStdXU
 
-        [sigma,t]=PsyCurve.lin2sigma(mu,m,y,bet,bLog,DPCrt);
+        if bLinear
+            [sigma,t]=PsyCurve.lin2sigma(mu,m,y,bet,bLog,DPCrt);
+        else
+            sigma=y;
+        end
 
         [stdXU,~,C]=unique(stdXAll);
         nC=numel(stdXU);
@@ -871,6 +924,78 @@ methods(Static)
         if any(isnan(out))
             dk
         end
+    end
+end
+methods(Static,Hidden)
+    function test0()
+        nTrlPerCmp=1000;  % number of trials per comparison
+        stdX=[7.5]; % standard
+        cmpX=[5.1540    6.3300    7.5000    8.6700    9.8460]; % comparisons
+
+        sigma=[0.8];
+        cr=5;
+        mu=7.5;
+
+        %S=PsyCurveData.genData(nTrlPerCmp,stdX,cmpX,[],sigma);
+        S=PsyCurveData.genData(nTrlPerCmp,stdX,cmpX,[],sigma,cr);
+        Fig.new('dv')
+        hist(S.DV)
+
+        Fig.new('rv')
+        plot(S.nRCmpChs)
+
+        %% Set Fitting Options
+        Opts=PsyCurveFit.getDefaults();
+        Opts.nIntrvl=2;
+        Opts.units='arcmin';
+        Opts.measure='Disparity';
+        %Opts.DPCrt=1;
+        %Opts.nBest=5;
+        %Opts.nBoot=10;
+        Opts.muFix=stdX;
+
+
+        %% Construct
+        pc=PsyCurveFit.new(S.stdX,S.cmpX,S.RCmpChs,Opts);
+
+        %% Run
+        pc.run()
+        Fig.new('plot')
+        pc.plot()
+    end
+    function pc=test2()
+        stdX=[3.75;     5.625;    7.5000;   9.375;     11.25]; % standards
+        cmpX=[-2.3460 -1.1700          0   1.1700     2.3460];
+        mu=[];
+        sigma=[0.5 0.6 0.8 0.9 1.0]; % standard deviation
+        nTrlPerCmp=100;  % number of trials per comparison
+
+        S=PsyCurveData.genData(nTrlPerCmp,stdX,cmpX,mu,sigma);
+
+        %% Set Fitting Options
+        Opts=PsyCurveFit.getDefaults();
+        Opts.nIntrvl=2;
+        Opts.DPCrt=1;
+        Opts.nBest=5;
+        Opts.nBoot=10;
+        Opts.muFix=stdX;
+        Opts.bLinear=true;
+        Opts.bBootEachCmp=true;
+        Opts.measure='Disparity';
+        Opts.units='arcmin';
+
+        %% Construct
+        pc=PsyCurveFit.new(S.stdX,S.cmpX,S.RCmpChs,Opts);
+
+        %% Run
+        pc.run();
+
+        %% Plot Curves
+        pc.plot();
+
+        %% Plot Threshold
+        pc.plotT();
+
     end
     function test1()
         % TODO
@@ -902,7 +1027,9 @@ methods(Static)
         %[S,G]=PsyCurveData.genNorm(mu,sigma,cr,nTrlPerCmp);
         %Dat=PsyCurveData(S.sC,S.cC,S.RCmpChs);
 
-        [S,G]=PsyCurveData.gen(stdX,mu,sigma,cr,nTrlPerCmp);
+        [S,G]=PsyCurveData.gen(nTrlPerCmp,stdX,mu,sigma,cr);
+        S
+        dk
         Dat=PsyCurveData(S.stdX,S.cmpX,S.RCmpChs);
         Dat.G=G;
 

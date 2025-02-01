@@ -82,15 +82,6 @@ methods(Hidden)
             end
         end
     end
-end
-methods
-    function out=copy(obj)
-        out=PsyCurveData();
-        out.init_(obj.stdX,obj.cmpX,obj.RCmpChs);
-    end
-    function struct(obj)
-        out=struct('stdX',obj.stdX,'cmpX',obj.cmpX,'RCmpChs',obj.RCmpChs);
-    end
     function out=selBoot(obj, bBootEachCmp, sd, nSmp, prcntUse)
         if nargin < 4
             nSmp=[];
@@ -108,13 +99,13 @@ methods
             S.RCmpChs=cell(obj.nS,1);
             S.stdX=cell(obj.nS,1);
             S.cmpX=cell(obj.nS,1);
-            for ic = 1:obj.cS
+            for ic = 1:numel(unique(obj.cS))
 
                 ind=find(obj.cS==ic);
                 if isempty(nSmp)
                     nSmp=round(numel(ind).*prcntUse./100);
                 end
-                rng('twister',sd);
+                rng(sd,'twister');
                 indSmp = ind(randi(nSmp,nSmp,1));
 
                 S.RCmpChs{ic}=   S0.RCmpChs(indSmp);
@@ -125,6 +116,7 @@ methods
             S.stdX=vertcat(S.stdX{:});
             S.cmpX=vertcat(S.cmpX{:});
         else
+            % XXX
             if isempty(nSmp)
                 nSmp=round(numel(C).*prcntUse./100);
             end
@@ -135,6 +127,15 @@ methods
 
         end
         out=PsyCurveData(S.stdX,S.cmpX,S.RCmpChs);
+    end
+end
+methods
+    function out=copy(obj)
+        out=PsyCurveData();
+        out.init_(obj.stdX,obj.cmpX,obj.RCmpChs);
+    end
+    function out=struct(obj)
+        out=struct('stdX',obj.stdX,'cmpX',obj.cmpX,'RCmpChs',obj.RCmpChs);
     end
     function plotPC(obj,varargin)
         [colors,varargin,bSuccess]=Args.getPair('Colors',varargin{:});
@@ -209,7 +210,31 @@ methods(Static)
             X(:,ind)=[];
         end
     end
+    function [S,G]=gen(nTrlPerCmp,stdX,mu,sigma,cr)
+        % XXX
+        [S,G]=PsyCurveData.genNorm(nTrlPerCmp,mu,sigma,cr);
+
+        sz=size(S.RCmpChs);
+
+        nS=numel(stdX);
+
+        cunq=unique(S.cC);
+        nC=numel(cunq);
+
+        S.stdX=zeros(sz);
+        S.cmpX=zeros(sz);
+        for is = 1:nS
+            indS=S.sC==is;
+            S.stdX(indS)=stdX(is);
+            for ic = 1:nC
+                indC=S.cC==ic;
+                S.cmpX(indS & indC)=G.mu(is,ic)+stdX(is);
+            end
+        end
+
+    end
     function out=gen2(mu,sigma,cr,nTrlPerCmp)
+        % XXX
         nStd=numel(stdX);
         nCmp=size(cmpX,2);
 
@@ -246,29 +271,99 @@ methods(Static)
         out=PsyCurveData(stdX,cmpX,RDat);
         out.G=g;
     end
-    function [S,G]=gen(stdX,mu,sigma,cr,nTrlPerCmp)
-        [S,G]=PsyCurveData.genNorm(mu,sigma,cr,nTrlPerCmp);
+    function out=genData(nTrlPerCmp,stdX,cmpX,Mu,sigma,cr,rho)
+        if nargin < 7 || isempty(rho)
+            rho=1;
+        end
+        if nargin < 6 || isempty(cr)
+            cr=0;
+        end
 
-        sz=size(S.RCmpChs);
+        n=numel(stdX);
+        if n > 1 && size(cmpX,1)==1
+            cmpX=bsxfun(@plus,stdX,cmpX);
+        end
+        if numel(sigma)==1
+            sigma=repmat(sigma,n,1);
+        end
+        if numel(cr)==1
+            cr=repmat(cr,n,1);
+        end
+        if numel(rho)==1
+            rho=repmat(rho,n,1);
+        end
+        out=struct('RCmpChs',[],'nRCmpChs',[],'DV',[],'cmpX',[],'stdX',[],'Sigma',[],'Rho',[]);
+        for i = 1:n
+            out=PsyCurveData.genData_(nTrlPerCmp,stdX(i),cmpX(i,:),Mu,sigma(i),cr(i),rho(i),out);
+        end
+    end
 
-        nS=numel(stdX);
+    function out=genData_(nTrlPerCmp,stdX,cmpX,Mu,sigma,cr,rho,out)
+        nPass=size(sigma,1);
+        nCmp=size(cmpX,2);
+        % cr=0 -> zero bias
 
-        cunq=unique(S.cC);
-        nC=numel(cunq);
+        % RESIZE
+        % Cmpx
+        cmpXAll=repelem(cmpX(1,:)',nTrlPerCmp,1);
+        if numel(stdX)==1
+            stdXAll=repmat(stdX,size(cmpXAll));
+        else
+            TODO
+        end
 
-        S.stdX=zeros(sz);
-        S.cmpX=zeros(sz);
-        for is = 1:nS
-            indS=S.sC==is;
-            S.stdX(indS)=stdX(is);
-            for ic = 1:nC
-                indC=S.cC==ic;
-                S.cmpX(indS & indC)=G.mu(is,ic)+stdX(is);
+        if isempty(Mu)
+            Mu=cmpX;
+        end
+        if size(Mu,1)==1
+            Mu=repmat(Mu,nPass,1);
+        end
+        if size(cr,2)==1
+            cr=repmat(cr,1,nCmp);
+        end
+
+        Rho=rho2Rho(rho);
+        if nPass == 1
+            Sigma=sigma;
+        else
+            Sigma=rho2cov(rho,sigma);
+        end
+        %crit=cr';
+        crit=(Mu-cr)';
+        crit=repmat(stdX,size(crit));
+
+
+        %  DAT
+        DVDat=[];
+        RDat=[];
+        nchoose=zeros(nCmp,nPass);
+        for i = 1:nCmp
+            % DV DATA
+            if nPass == 1
+                dvdat=normrnd(Mu(:,i),Sigma,nTrlPerCmp,1);
+            else
+                dvdat=mvnrnd(Mu(:,i),Sigma,nTrlPerCmp);
             end
+            DVDat=[DVDat; dvdat];
+
+            % R DATA
+            rdat =bsxfun(@gt,dvdat,crit(i,:));
+            nchoose(i,:)=sum(rdat,1);
+            RDat=[RDat; rdat];
+        end
+        out.RCmpChs=[out.RCmpChs; RDat];
+        out.nRCmpChs=[out.nRCmpChs; nchoose];
+        out.DV=[out.DV; DVDat];
+        out.cmpX=[out.cmpX; cmpXAll];
+        out.stdX=[out.stdX; stdXAll];
+        out.Sigma=[out.Sigma; Sigma];
+        if nPass > 1
+            out.Rho=[out.Rho; rho];
         end
 
     end
-    function [S,G]=genNorm(mu,sigma,cr,nTrlPerCmp)
+    function [S,G]=genNorm(nTrlPerCmp,mu,sigma,cr)
+        % XXX
         % everything has been normalized
         % cr = 0 = unbiased
         % mu - relative to center

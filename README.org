@@ -1,0 +1,181 @@
+* PsyCurves Mat
+Fit and plot psychometric curves.
+
+** Use
+*** Fit individual standard
+#+begin_src octave
+%% Generate Data
+stdX=[7.5]; % standard
+cmpX=[5.1540    6.3300    7.5000    8.6700    9.8460]; % comparisons
+mu=[];
+sigma=[0.8]; % standard deviation
+nTrlPerCmp=1000;  % number of trials per comparison
+
+S=PsyCurveData.genData(nTrlPerCmp,stdX,cmpX,mu,sigma);
+
+%% Set Fitting Options
+Opts=PsyCurveFit.getDefaults();
+Opts.nIntrvl=2;
+Opts.DPCrt=1;
+Opts.nBest=5;
+Opts.nBoot=10;
+Opts.muFix=stdX;
+Opts.measure='Disparity';
+Opts.units='arcmin';
+
+%% Construct
+pc=PsyCurveFit.new(S.stdX,S.cmpX,S.RCmpChs,Opts);
+
+%% Run
+pc.run();
+
+%% Print summary
+pc.summary();
+
+%% Plot Curves
+pc.plot();
+
+%% Plot Threshold
+pc.plotT();
+
+
+#+end_src octave
+*** Fit linearly across multiple standards
+#+begin_src octave
+%% Generate Data
+stdX=[3.75;     5.625;    7.5000;   9.375;     11.25]; % standards
+cmpX=[2.3460    1.1700         0   -1.1700   -2.3460];
+mu=[];
+sigma=[0.5 0.6 0.8 0.9 1.0]; % standard deviations
+nTrlPerCmp=1000;  % number of trials per comparison
+
+S=PsyCurveData.genData(nTrlPerCmp,stdX,cmpX,mu,sigma);
+
+%% Set Fitting Options
+Opts=PsyCurveFit.getDefaults();
+Opts.nIntrvl=2;
+Opts.DPCrt=1;
+Opts.nBest=5;
+Opts.nBoot=10;
+Opts.muFix=stdX;
+Opts.measure='Disparity';
+Opts.units='arcmin';
+Opts.bLinear=true;
+Opts.bBootEachCmp=true;
+
+%% Construct
+pc=PsyCurveFit.new(S.stdX,S.cmpX,S.RCmpChs,Opts);
+
+%% Run
+pc.run();
+
+%% Print summary
+pc.summary();
+
+%% Plot Curves
+pc.plot();
+
+%% Plot Threshold
+pc.plotT();
+
+#+end_src octave
+** PsyCurveFit
+*** PsyCurveFit.new
+
+
+
+ obj=PsyCurveFit.new(S.stdX,S.cmpX,S.RCmpChs,Opts); Construct PsyCurveFit object **** Positional Arguments
+  #+begin_src
+| stdX    | [t x 1]     | standard values                               |
+| cmpX    | [t x 1]     | comparison values                             |
+| RcmpChs | [t x 1 ] | response data where which interval was chosen |
+  #+end_src
+ where ~t~ = number of tirals.
+**** Named Arguments
+
+
+
+
+ | muFix        | value to fix mu (location) at                           |
+ | sigmaFix     | value to fix sigma (scale) at                           |
+ | betFix       | value to fit beta (shape) at                            |
+ | yFix         | value to fix y-intercept at                             |
+ | mFix         | value to fix slope at                                   |
+ |              |                                                         |
+ | muFitInd     |                                                         |
+ | sigmaFitInd  |                                                         |
+ | mFitInd      |                                                         |
+ | betFitInd    |                                                         |
+ |              |                                                         |
+ | bMuStdFit    |                                                         |
+ | bLinear      | Whether to fit thresholds linearly across standards     |
+ | bLogLinear   | Whether to fit thresholds log-linearly across standards |
+ | bNegLinear   |                                                         |
+ |              |                                                         |
+ | DPCrt        | d-prime criterion                                       |
+ | nIntrvl      | number of intervals                                     |
+ |              |                                                         |
+ | nBoot        | number of bootstraps to fit                             |
+ | bBoot        | whether to bootstrap                                    |
+ | CIsz         | confidence interval quartile                            |
+ | prctUse      | percent to use                                          |
+ | minFuncType  |                                                         |
+ |              |                                                         |
+ | nBest        |                                                         |
+ | bBest        |                                                         |
+ | bBootEachCmp |                                                         |
+ | nBest        |                                                         |
+ | bootSeed     |                                                         |
+ |              |                                                         |
+ | measure      |                                                         |
+ | units        | Units of measure                                       |
+*** PsyCurve.getDefaults
+~Opts=PsyCurve.getDefaults~
+
+*** obj.run
+~obj.fit(bRefit)~
+
+Fit data to psychometric curves.
+bRefit - whether
+
+
+*** obj.summary
+~obj.summary(varargin)~
+
+Output summary of variables.
+
+*** obj.plot
+~obj.plot(varargin)~
+
+Plot psychometric data and curve fits.
+
+*** obj.plotT
+~obj.plotT(varargin)~
+
+*** obj.plot_negLL
+obj.plot_negLL()
+
+Plot negative log likelihoods.
+*** PsyCurve.negLLFunc
+~out=negLLFunc(mu,sigma,bet, cmpX,RCmpChs, nIntrvl)~
+*** PsyCurve.negLLFuncMult
+~function out=negLLFuncMult(mu,y,m,bet, stdXAll,cmpXAll,RCmpChsAll, DPCrt,nIntrvl,bLog,bLinear)~
+
+
+** PsyCurveData
+*** PsyCurveData.percentCorrect
+~[PC,N1,N,N0]=percentCorrect(stdX,cmpX,RCmpChs)~
+*** PsyCurveData.genData
+*** PsyCurveData.parse
+*** obj.plotPC
+~obj.plotPC(varargin)~
+
+** PsyCurve
+*** PsyCurve.genGauss
+~[PC,DP] = PsyCurve.genGauss(X,mu,sigma,bet,nIntrvl)~
+*** PsyCurve.sigma2thresh
+~T = PsyCurve.sigma2thresh(sigma,dpcrit,bet)~
+*** PsyCurve.thresh2sigma
+~sigma=PsyCurve.thresh2sigma(T,dpcrit,bet)~
+*** PsyCurve.lin2sigma
+~[sigma,t]=PsyCurve.lin2sigma(x,m,y,bet,bLog,dpcrit)~
